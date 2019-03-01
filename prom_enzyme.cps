@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!-- generated with COPASI 4.19 (Build 140) (http://www.copasi.org) at 2019-03-01 15:24:21 UTC -->
+<!-- generated with COPASI 4.19 (Build 140) (http://www.copasi.org) at 2019-03-01 16:49:09 UTC -->
 <?oxygen RNGSchema="http://www.copasi.org/static/schema/CopasiML.rng" type="xml"?>
 <COPASI xmlns="http://www.copasi.org/static/schema" versionMajor="4" versionMinor="19" versionDevel="140" copasiSourcesModified="0">
   <ListOfFunctions>
@@ -855,7 +855,7 @@ Reaction scheme where the products are created from the reactants and the change
   </ListOfPlots>
   <GUI>
   </GUI>
-  <SBMLReference file="prom_enzyme_temp2.xml">
+  <SBMLReference file="prom_enzyme.xml">
     <SBMLMap SBMLid="Activated_promoter" COPASIkey="Metabolite_11"/>
     <SBMLMap SBMLid="Catalysis" COPASIkey="Reaction_4"/>
     <SBMLMap SBMLid="Cell" COPASIkey="Compartment_1"/>
@@ -870,6 +870,7 @@ Reaction scheme where the products are created from the reactants and the change
     <SBMLMap SBMLid="Leakage" COPASIkey="Reaction_2"/>
     <SBMLMap SBMLid="Product" COPASIkey="Metabolite_3"/>
     <SBMLMap SBMLid="Substrate" COPASIkey="Metabolite_1"/>
+    <SBMLMap SBMLid="function" COPASIkey="Function_41"/>
   </SBMLReference>
   <ListOfUnitDefinitions>
     <UnitDefinition key="Unit_0" name="meter" symbol="m">

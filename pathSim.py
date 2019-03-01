@@ -22,8 +22,8 @@ def modelTemplate(nsteps):
           v;
         end
 
-        function Henri_Michaelis_Menten__irreversible(substrate, Km, V)
-          V*substrate/(Km + substrate);
+        function Henri_Michaelis_Menten__irreversible(substrate, enzyme, Km, kcat)
+          kcat*enzyme*substrate/(Km + substrate);
         end
 
         function Hill_Cooperativity(substrate, Shalve, V, h)
@@ -39,11 +39,12 @@ def modelTemplate(nsteps):
           species Inducer in Cell, Activated_promoter in Cell;
 
           // Reactions:
+          Induc: => Inducer; Cell*Constant_flux__irreversible(1);
           Induction: Inducer => Activated_promoter; Copy_number*Cell*Hill_Cooperativity(Inducer, Induction_Shalve, Induction_Vi, Induction_h);
-          Expression: Activated_promoter => Enzyme; Cell*Expression_k1*Activated_promoter;
+          Expression: Activated_promoter => Enzyme; Copy_number*Cell*Expression_k1*Activated_promoter;
           Leakage:  => Enzyme; Cell*Constant_flux__irreversible(Leakage_vl);
           Degradation: Enzyme => ; Cell*Degradation_k2*Enzyme;
-          Catalysis: Substrate => Product; Cell*Henri_Michaelis_Menten__irreversible(Substrate, Catalysis_Km, Catalysis_V);
+          Catalysis: Substrate => Product; Cell*Henri_Michaelis_Menten__irreversible(Substrate, Enzyme, Catalysis_Km, Catalysis_kcat);
 
          // Species initializations:
           Substrate = 0.5;
@@ -57,14 +58,14 @@ def modelTemplate(nsteps):
           Cell = 1;
 
           // Variable initializations:
-          Induction_Shalve = 0.01;
-          Induction_Vi = 10000;
+          Induction_Shalve = 0.1;
+          Induction_Vi = 1000;
           Induction_h = 4;
-          Expression_k1 = 100;
-          Leakage_vl = 0.0001;
-          Degradation_k2 = 10;
+          Expression_k1 = 1e6;
+          Leakage_vl = 1e-9;
+          Degradation_k2 = 1e-6;
           Catalysis_Km = 0.1;
-          Catalysis_V = 0.1;
+          Catalysis_kcat = 0.1;
 
           // Other declarations:
           const Cell;
@@ -87,7 +88,7 @@ def ranges():
     param = {
         'Catalysis': {
                 'Km': [0.001, 1e2],
-                'V': [0.01, 10] 
+                'kcat': [0.01, 10] 
                 },
         'Degradation': {
                 'k2': [10, 1e3]
