@@ -14,8 +14,8 @@ To view a copy of this license, visit <http://opensource.org/licenses/MIT/>.
 import tellurium as te
 import numpy as np
 
-def modelTemplate(nsteps):
-    """ Nsteps basic linear pathway defined using tellurium """
+
+def modelHeader():
     antinom = """
     // Created by libAntimony v2.9.4
         function Constant_flux__irreversible(v)
@@ -29,18 +29,34 @@ def modelTemplate(nsteps):
         function Hill_Cooperativity(substrate, Shalve, V, h)
           V*(substrate/Shalve)^h/(1 + (substrate/Shalve)^h);
         end
+    """
+    return antinom
 
-
-        model New_Model()
-
+def modelTemplate(promoter):
+    """ Nsteps basic linear pathway defined using tellurium """
+    antinom = ''
+    if promoter is not None:
+        antinom += """
+            model Prom_Model()
+        """
+    else:
+        antinom += """
+            model Noprom_Model()
+        """
+    antinom += """
           // Compartments and Species:
           compartment Cell;
           species Substrate in Cell, Product in Cell, Enzyme in Cell;
           species Inducer in Cell, Activated_promoter in Cell;
-
           // Reactions:
-          Induc: => Inducer; Cell*Constant_flux__irreversible(1);
+          //Induc: => Inducer; Cell*Constant_flux__irreversible(1);
+          // See doi: https://doi.org/10.1101/360040 for modeling the induction using the Hill function
+          """
+    if promoter is not None:
+        antinom += """
           Induction: Inducer => Activated_promoter; Copy_number*Cell*Hill_Cooperativity(Inducer, Induction_Shalve, Induction_Vi, Induction_h);
+          """
+    antinom += """
           Expression: Activated_promoter => Enzyme; Copy_number*Cell*Expression_k1*Activated_promoter;
           Leakage:  => Enzyme; Cell*Constant_flux__irreversible(Leakage_vl);
           Degradation: Enzyme => ; Cell*Degradation_k2*Enzyme;
@@ -50,17 +66,22 @@ def modelTemplate(nsteps):
           Substrate = 0.5;
           Product = 0;
           Enzyme = 0;
+          """
+    if promoter is not None:
+        antinom += """
           Inducer = 1;
+         """
+    antinom += """
           Activated_promoter = 0;
-          Copy_number = 5;
+          Copy_number = 1;
 
           // Compartment initializations:
           Cell = 1;
 
           // Variable initializations:
-          Induction_Shalve = 0.1;
-          Induction_Vi = 1000;
-          Induction_h = 4;
+          Induction_Shalve = 1e-1;
+          Induction_Vi = 1e7;
+          Induction_h = 1.85;
           Expression_k1 = 1e6;
           Leakage_vl = 1e-9;
           Degradation_k2 = 1e-6;
@@ -73,18 +94,70 @@ def modelTemplate(nsteps):
         end
         
         """
+    return antinom
+        
+        
+def pathway(promoters):         
+    antinom = modelHeader()
+    antinom += modelTemplate(1)
+    antinom += modelTemplate(None)    
     antinom += "model *Big_Model()"+"\n"
-    for i in np.arange(nsteps):
-            antinom += "\t"+"m%d: New_Model();" % (i+1,)
-            antinom += "\n"
-    for i in np.arange(nsteps-1):
-            antinom += "\t"+"m%d.Product is m%d.Substrate;" % (i+1, i+2)
+    for i in np.arange(len(promoters)):
+        p = promoters[i]
+        if p is not None:
+            antinom += "\t"+"m%d: Prom_Model();" % (i+1,)
+        else:
+            antinom += "\t"+"m%d: Noprom_Model();" % (i+1,)
+        antinom += "\n"
+    for i in np.arange(len(promoters)-1):
+        antinom += "\t"+"m%d.Product is m%d.Substrate;" % (i+1, i+2)
+        antinom += "\n"
+    for i in np.arange(1,len(promoters)):
+        p = promoters[i]
+        if p is None:
+            antinom += "\t"+"m%d.Activated_promoter is m%d.Activated_promoter" %(i+1,i)
             antinom += "\n"
     antinom += "end\n"
     return te.loada(antinom)
 
+
+class Model():
+    def __init__(self, nsteps, promoters):
+        self.nsteps = nsteps
+        self.promoters = promoters
+        self.model = pathway(promoters)
+        self.kinetics = None
+        self.copy_number = None
+        self.leakage = None
+        self.degradation = None
+        self.SetPromoters()
+    def SetKinetics(self,kinetics):
+        self.kinetics = kinetics
+        for i in np.arange(kinetics):
+            self.model['m'+str(i+1)+'_Catalysis_kcat'] = kinetics[i][0] 
+            self.model['m'+str(i+1)+'_Catalysis_Km'] = kinetics[i][1] 
+    def SetCopyNumber(self,cn):
+        self.copy_number = cn
+        for i in np.arange(self.nsteps):
+            self.model['m'+str(i+1)+'_Copy_number'] = cn 
+    def SetPromoters(self):
+        for i in np.arange(self.nsteps):
+            if self.promoters[i] is not None:
+                self.model['m'+str(i+1)+'_Expression_k1'] = self.promoters[i]
+            else:
+                self.model['m'+str(i+1)+'_Expression_k1'] = self.model['m'+str(i)+'_Expression_k1']
+    def SetLeakage(self,leaks):
+        for i in np.arange(self.nsteps):
+             self.model['m'+str(i+1)+'_Leakage_vl'] = leaks[i]
+    def SetDegradation(self,deg):
+        for i in np.arange(self.nsteps):
+             self.model['m'+str(i+1)+'_Degradation_k2'] = deg[i]
+                
+    
+            
+
 def ranges():
-    """ Define global parameter ranges """
+    """ Define global ranges for random parameters """
     param = {
         'Catalysis': {
                 'Km': [0.001, 1e2],
@@ -103,10 +176,22 @@ def ranges():
                 },
         'Leakage': {
                 'vl': [1e-6, 1e-4]
-                }
+                },
         }
     return param
+
+def libraries(nprom, nori):
+    """ Define library values for:
+        - Origin of replication
+        - Promoters
+    """
     
+    param = {
+        'Expression': np.random.randint(1,1000,nprom),
+        'Copy_number': np.random.randint(1,100,nori)
+            }
+    return param
+
 def instance():
     """ Generate an instance mean, std """
     par = ranges()
@@ -121,7 +206,7 @@ def instance():
             vals[group][x] = ( mean,std )
     return vals
             
-def initModel(model, nr=5):
+def initModel(model, nsteps=5):
     """ Each step in the pathway requires the following parameter definitions:
             - Induction: Shalve, Vi, h
             - Expression: k1
@@ -131,13 +216,14 @@ def initModel(model, nr=5):
             - Initial substrate concentration
             - Inducer concentrations
     """
-    # Each step consists of nr reactions
-    nsteps = int( model.getNumReactions()/nr )
     # Init all species to 0
     for step in np.arange(0,nsteps):
         model['m'+str(step+1)+'_Substrate'] = 0
         model['m'+str(step+1)+'_Enzyme'] = 0
-        model['m'+str(step+1)+'_Activated_promoter'] = 0
+        try:
+            model['m'+str(step+1)+'_Activated_promoter'] = 0
+        except:
+            pass
     model['m'+str(nsteps)+'_Product'] = 0
     
 
