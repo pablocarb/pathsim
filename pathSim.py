@@ -14,7 +14,9 @@ To view a copy of this license, visit <http://opensource.org/licenses/MIT/>.
 import tellurium as te
 import numpy as np
 import pandas as pd
-
+import statsmodels.formula.api as smf
+from itertools import product
+import re
 
 import sys
 sys.path.append('/mnt/SBC1/code/sbml2doe')
@@ -54,7 +56,13 @@ def modelTemplate(promoter):
           // Compartments and Species:
           compartment Cell;
           species Substrate in Cell, Product in Cell, Enzyme in Cell;
-          species Inducer in Cell, Activated_promoter in Cell;
+          """
+    if promoter is not None:
+        antinom += """
+              species Inducer in Cell; 
+          """
+    antinom += """
+          Activated_promoter in Cell;
           // Reactions:
           //Induc: => Inducer; Cell*Constant_flux__irreversible(1);
           // See doi: https://doi.org/10.1101/360040 for modeling the induction using the Hill function
@@ -271,7 +279,10 @@ def initModel(model, substrate=0.0, nsteps=5):
     for step in np.arange(0,nsteps):
         model['m'+str(step+1)+'_Substrate'] = 0
         model['m'+str(step+1)+'_Enzyme'] = 0
-        model['m'+str(step+1)+'_Inducer'] = 1
+        try:
+            model['m'+str(step+1)+'_Inducer'] = 1
+        except:
+            pass
         try:
             model['m'+str(step+1)+'_Activated_promoter'] = 0
         except:
@@ -306,37 +317,95 @@ class metPath:
         initModel( self.model )
         self.model[ 'm1_Substrate' ] = initSubstrate
         for i in np.arange( self.steps ):
-            self.model[ 'm{}_Inducer'.format(i+1) ] = 1.0
+            induc = 'm{}_Inducer'.format(i+1)
+            if induc in self.model:
+                self.model[ induc ] = 1.0
 
-
-def Design():
-    steps = 5
-    variants = 4
-    npromoters = 3
-    nplasmids = 3
-    libsize = 32
+def SelectCurves(pw):
+    selections = []
+    target = None
+    for i in pw.timeCourseSelections:
+        if i.endswith('Inducer]') or i.endswith('promoter]') or i.endswith('Enzyme]'):
+            continue
+        selections.append(i)
+        if i.endswith('Product]'):
+            target = i
+    pw.timeCourseSelections = selections
+    pw.steadyStateSelections = selections
+    return target
+        
+def Design(steps, nplasmids, npromoters, variants, libsize):
+    steps = steps
+    variants = nplasmids
+    npromoters = npromoters
+    nplasmids = variants
+    libsize = libsize
     positional = False
     par = Parameters(nplasmids,npromoters,steps,variants)
     factors, diagnostics = evaldes( steps, variants, npromoters, nplasmids, libsize, positional )
     M = diagnostics['M']
-    sim = []
+    results = []
     for i in np.arange(M.shape[0]):
         design = M[i,:]
         pw = Construct(par,design)
+        target = SelectCurves(pw)
         s = pw.simulate(0,100,1000)
         ds = pd.DataFrame(s,columns=s.colnames)
         pw.plot(s, show=False)
+        results.append( s[target][-1] )
     te.show()
-    return pw, ds
+    return pw, ds, M, results, par
 
+# TO DO: multiple random sims per design? (but with same params)
 
+def FitModel(M,results):
+    columns = ['C'+str(i) for i in np.arange(M.shape[1])]
+    dd = pd.DataFrame( M, columns=columns )
+    promLevels = []
+    for j in np.arange(3,dd.shape[1],2):
+        promLevels.append( int(len(dd.iloc[:,j].unique())/2) )  
+    for i in np.arange(M.shape[0]):
+        for j in np.arange(M.shape[1]):
+            # Add exception for promoters
+            dd.iloc[i,j] = "L"+str(M[i,j])
+            if j>2 and ( (j+1) % 2 == 0):
+                plevel = promLevels[ int( (j-3)/2 ) ]
+                if M[i,j] > plevel-1:
+                    dd.iloc[i,j] = "L"+str(plevel)
+                else:
+                    dd.iloc[i,j] = "L"+str(M[i,j])
+                
+    dd['y'] = results
+    formula = 'y ~ '+' + '.join(columns)
+    ols = smf.ols( formula=formula, data=dd)
+    res = ols.fit()
+    return res, dd
 
+def BestCombinations(res, dd):
+    levels = []
+    for j in np.arange(dd.shape[1]-1):
+        levels.append( dd.iloc[:,j].unique() )
+    comb = []
+    for combo in product( *levels ):
+        comb.append( combo )
+    ndata = pd.DataFrame( comb, columns=dd.columns[0:-1] )
+    ndata['pred'] = res.predict( ndata )
+    ndata = ndata.sort_values(by='pred', ascending=False)
+    return ndata
 
+def ValidatePred(ndata, par):
+    """ Simulating all combinations will become too expensive with large sets! """
+    results = []
+    for i in np.arange(ndata.shape[0]):
+        design = [ int( re.sub('L', '',x)) for x in np.array( ndata.iloc[i,0:-1] )  ]
 
-
-
-
-
-
+        pw = Construct(par,design)
+        target = SelectCurves(pw)
+        s = pw.simulate(0,100,1000)
+        ds = pd.DataFrame(s,columns=s.colnames)
+        results.append( s[target][-1] )
+    ndata['sim'] = results
+    
+# Finally, plot ndata['pred'], ndata['sim']
 
 
