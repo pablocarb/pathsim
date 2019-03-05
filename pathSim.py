@@ -13,6 +13,13 @@ To view a copy of this license, visit <http://opensource.org/licenses/MIT/>.
 
 import tellurium as te
 import numpy as np
+import pandas as pd
+
+
+import sys
+sys.path.append('/mnt/SBC1/code/sbml2doe')
+from sampleCompression import evaldes
+
 
 
 def modelHeader():
@@ -160,22 +167,19 @@ def ranges():
     """ Define global ranges for random parameters """
     param = {
         'Catalysis': {
-                'Km': [0.001, 1e2],
-                'kcat': [0.01, 10] 
+                'Km': [0.1, 100],
+                'kcat': [0.1, 10] 
                 },
         'Degradation': {
-                'k2': [10, 1e3]
+                'k2': [1e-6, 1e-6]
                 },
-        'Expression': {
-                'k1': [10, 1e3]
-                },       
         'Induction': {
-                'Shalve': [0.0001, 1],
-                'Vi': [1e3, 1e5],
-                'h': [2, 6]
+                'Shalve': [0.1, 0.1],
+                'Vi': [1e6, 1e7],
+                'h': [2, 4]
                 },
         'Leakage': {
-                'vl': [1e-6, 1e-4]
+                'vl': [1e-9, 1e-9]
                 },
         }
     return param
@@ -187,26 +191,73 @@ def libraries(nprom, nori):
     """
     
     param = {
-        'Expression': np.random.randint(1,1000,nprom),
+        'Expression': 1e3*np.random.randint(1,1000,nprom),
         'Copy_number': np.random.randint(1,100,nori)
             }
+    for y in param:
+        param[y].sort()
     return param
+
+def Parameters(nori,nprom,nsteps,nvariants):
+    """ Define de parameters and ranges """
+    """ TO DO: variants!! """
+    par = {}
+    plib = libraries(nprom,nori)
+    par['Copy_number'] = plib['Copy_number']
+    par['Expression'] = plib['Expression']
+    par['Step'] = []
+    for i in np.arange(nsteps):
+        vals = []
+        for j in np.arange(nvariants):
+            vals.append( instance() )
+        par['Step'].append( vals )
+    return par
+            
+def Construct(par,design):
+    promoters = []
+    for x in np.arange(1,len(design),2):
+        # Backbone promoter
+        if x == 1:
+            promoters.append( par['Expression'][design[x]] )
+        # For the rest of promoters, we assume half of them empty
+        else:
+            if design[x]+1 > len(par['Expression']):
+                promoters.append( None )
+            else:
+                promoters.append( par['Expression'][design[x]] )
+    # Use the information about promoters to create the pathway  
+    pw = pathway(promoters)
+    initModel( pw, nsteps=len(par['Step']), substrate=1.0 )
+    # Init model??
+    # Set up the copy number
+    for i in np.arange(len(par['Step'])):
+        pw['m'+str(i+1)+'_Copy_number'] = float(par['Copy_number'][design[0]])
+    # Set up the gene
+
+    for i in np.arange(len(par['Step'])):
+        enzyme = par['Step'][i][design[2+i*2]]
+        for val in enzyme:
+            (mean, std) = enzyme[val]
+            p = np.random.normal( mean, std )
+            param = 'm{}_{}'.format( i+1, val )
+            pw[ param ] = p
+    return pw
+        
 
 def instance():
     """ Generate an instance mean, std """
     par = ranges()
     vals = {}
     for group in par:
-        vals[group] = {}
         for x in par[group]:
             xmax = par[group][x][1]
             xmin = par[group][x][0]
             mean = np.random.uniform( xmin, xmax )
             std = mean/100.0 + np.random.rand()*(xmax-xmin)/100.0
-            vals[group][x] = ( mean,std )
+            vals['_'.join([group,x])] = ( mean,std )
     return vals
             
-def initModel(model, nsteps=5):
+def initModel(model, substrate=0.0, nsteps=5):
     """ Each step in the pathway requires the following parameter definitions:
             - Induction: Shalve, Vi, h
             - Expression: k1
@@ -220,11 +271,14 @@ def initModel(model, nsteps=5):
     for step in np.arange(0,nsteps):
         model['m'+str(step+1)+'_Substrate'] = 0
         model['m'+str(step+1)+'_Enzyme'] = 0
+        model['m'+str(step+1)+'_Inducer'] = 1
         try:
             model['m'+str(step+1)+'_Activated_promoter'] = 0
         except:
             pass
     model['m'+str(nsteps)+'_Product'] = 0
+    model['m1_Substrate'] = substrate
+
     
 
 class metPath:
@@ -255,10 +309,25 @@ class metPath:
             self.model[ 'm{}_Inducer'.format(i+1) ] = 1.0
 
 
-
-
-
-
+def Design():
+    steps = 5
+    variants = 4
+    npromoters = 3
+    nplasmids = 3
+    libsize = 32
+    positional = False
+    par = Parameters(nplasmids,npromoters,steps,variants)
+    factors, diagnostics = evaldes( steps, variants, npromoters, nplasmids, libsize, positional )
+    M = diagnostics['M']
+    sim = []
+    for i in np.arange(M.shape[0]):
+        design = M[i,:]
+        pw = Construct(par,design)
+        s = pw.simulate(0,100,1000)
+        ds = pd.DataFrame(s,columns=s.colnames)
+        pw.plot(s, show=False)
+    te.show()
+    return pw, ds
 
 
 
