@@ -17,6 +17,7 @@ import pandas as pd
 import statsmodels.formula.api as smf
 from itertools import product
 import re
+import matplotlib.pyplot as plt
 
 import sys
 sys.path.append('/mnt/SBC1/code/sbml2doe')
@@ -55,6 +56,7 @@ def modelTemplate(promoter):
     antinom += """
           // Compartments and Species:
           compartment Cell;
+          
           species Substrate in Cell, Product in Cell, Enzyme in Cell;
           """
     if promoter is not None:
@@ -62,7 +64,10 @@ def modelTemplate(promoter):
               species Inducer in Cell; 
           """
     antinom += """
-          Activated_promoter in Cell;
+          species Activated_promoter in Cell;
+          species Growth in Cell;
+          Biomass: Growth -> Substrate; Cell*Kg1*Growth - Cell*Kg2*Substrate
+           Decay: Growth -> ; Cell*Kd*Growth
           // Reactions:
           //Induc: => Inducer; Cell*Constant_flux__irreversible(1);
           // See doi: https://doi.org/10.1101/360040 for modeling the induction using the Hill function
@@ -92,6 +97,7 @@ def modelTemplate(promoter):
 
           // Compartment initializations:
           Cell = 1;
+          Growth = 1;
 
           // Variable initializations:
           Induction_Shalve = 1e-1;
@@ -102,6 +108,10 @@ def modelTemplate(promoter):
           Degradation_k2 = 1e-6;
           Catalysis_Km = 0.1;
           Catalysis_kcat = 0.1;
+          Kg1 = 5;
+          Kg2 = 1;
+          Kd = 1e-1;
+          
 
           // Other declarations:
           const Cell;
@@ -325,7 +335,7 @@ def SelectCurves(pw):
     selections = []
     target = None
     for i in pw.timeCourseSelections:
-        if i.endswith('Inducer]') or i.endswith('promoter]') or i.endswith('Enzyme]'):
+        if i.endswith('Inducer]') or i.endswith('promoter]') or  i.endswith('Enzyme]') or i.endswith('Growth]'):
             continue
         selections.append(i)
         if i.endswith('Product]'):
@@ -334,7 +344,7 @@ def SelectCurves(pw):
     pw.steadyStateSelections = selections
     return target
         
-def Design(steps, nplasmids, npromoters, variants, libsize):
+def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32):
     steps = steps
     variants = nplasmids
     npromoters = npromoters
@@ -349,10 +359,11 @@ def Design(steps, nplasmids, npromoters, variants, libsize):
         design = M[i,:]
         pw = Construct(par,design)
         target = SelectCurves(pw)
-        s = pw.simulate(0,100,1000)
+        s = pw.simulate(0,400,1000)
         ds = pd.DataFrame(s,columns=s.colnames)
         pw.plot(s, show=False)
         results.append( s[target][-1] )
+    plt.figure(1)
     te.show()
     return pw, ds, M, results, par
 
@@ -391,21 +402,44 @@ def BestCombinations(res, dd):
     ndata = pd.DataFrame( comb, columns=dd.columns[0:-1] )
     ndata['pred'] = res.predict( ndata )
     ndata = ndata.sort_values(by='pred', ascending=False)
+    ndata = ndata.reset_index(drop=True)
     return ndata
 
-def ValidatePred(ndata, par):
+def ValidatePred(ndata, par, random=100):
     """ Simulating all combinations will become too expensive with large sets! """
+    """ Alternative ask for a random sample """
+    if random is None:
+        points = np.arange(ndata.shape[0])
+    else:
+        points = np.hstack( [ [0,ndata.shape[0]-1], np.random.choice(ndata.shape[0],random-2,replace=False) ] )
     results = []
-    for i in np.arange(ndata.shape[0]):
+    for i in points:
         design = [ int( re.sub('L', '',x)) for x in np.array( ndata.iloc[i,0:-1] )  ]
 
         pw = Construct(par,design)
         target = SelectCurves(pw)
-        s = pw.simulate(0,100,1000)
+        s = pw.simulate(0,400,1000)
         ds = pd.DataFrame(s,columns=s.colnames)
         results.append( s[target][-1] )
-    ndata['sim'] = results
+    ndata.loc[points,'sim'] = results
     
-# Finally, plot ndata['pred'], ndata['sim']
+    
+def PlotResults(ndata):
+    plt.figure(2)
+    plt.scatter( ndata['pred'],ndata['sim'] )
+    plt.show()
+    
+def POC(steps=3,nplasmids=2,npromoters=2,variants=1,libsize=32):
+    # Generate a DoE-based library and simulate results
+    pw, ds, M, results, par = SimulateDesign(steps, nplasmids, npromoters, variants, libsize)
+    # Fit a regression (constrast) model
+    res, dd = FitModel(M,results)
+    # Predict combinations based on the model
+    ndata = BestCombinations(res,dd)
+    # Validate predictions
+    ValidatePred(ndata, par)
+    PlotResults(ndata)
+    
+    
 
 
