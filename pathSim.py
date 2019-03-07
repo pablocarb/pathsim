@@ -18,9 +18,6 @@ import statsmodels.formula.api as smf
 from itertools import product
 import re
 import matplotlib.pyplot as plt
-
-import sys
-sys.path.append('/mnt/SBC1/code/sbml2doe')
 from sampleCompression import evaldes
 
 
@@ -344,15 +341,15 @@ def SelectCurves(pw):
     pw.steadyStateSelections = selections
     return target
         
-def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32):
+def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, show=False):
     steps = steps
-    variants = nplasmids
+    variants = variants
     npromoters = npromoters
-    nplasmids = variants
+    nplasmids = nplasmids
     libsize = libsize
     positional = False
     par = Parameters(nplasmids,npromoters,steps,variants)
-    factors, diagnostics = evaldes( steps, variants, npromoters, nplasmids, libsize, positional )
+    diagnostics = evaldes( steps, variants, npromoters, nplasmids, libsize, positional )
     M = diagnostics['M']
     results = []
     for i in np.arange(M.shape[0]):
@@ -361,11 +358,11 @@ def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32):
         target = SelectCurves(pw)
         s = pw.simulate(0,400,1000)
         ds = pd.DataFrame(s,columns=s.colnames)
-        pw.plot(s, show=False)
         results.append( s[target][-1] )
-    plt.figure(1)
-    te.show()
-    return pw, ds, M, results, par
+    if show:
+        plt.figure(1)
+        te.show()
+    return pw, ds, M, results, par, diagnostics
 
 # TO DO: multiple random sims per design? (but with same params)
 
@@ -411,7 +408,10 @@ def ValidatePred(ndata, par, random=100):
     if random is None:
         points = np.arange(ndata.shape[0])
     else:
-        points = np.hstack( [ [0,ndata.shape[0]-1], np.random.choice(ndata.shape[0],random-2,replace=False) ] )
+        points = np.hstack( [ [0,ndata.shape[0]-1], 
+                             np.random.choice(ndata.shape[0],
+                                              min(ndata.shape[0],random-2),
+                                              replace=False) ] )
     results = []
     for i in points:
         design = [ int( re.sub('L', '',x)) for x in np.array( ndata.iloc[i,0:-1] )  ]
@@ -422,24 +422,57 @@ def ValidatePred(ndata, par, random=100):
         ds = pd.DataFrame(s,columns=s.colnames)
         results.append( s[target][-1] )
     ndata.loc[points,'sim'] = results
-    
+    ix = np.logical_not( np.isnan( ndata['sim'] ) )
+    cc = np.corrcoef( ndata.loc[ix,'pred'], ndata.loc[ix,'sim'] )[0,1]
+    rms = np.sqrt( np.sum((ndata.loc[ix,'pred'] - ndata.loc[ix,'sim'] )**2 )/len(np.where(ix)) )
+    performance = { 'cc': cc, 'rms': rms }
+    return performance
     
 def PlotResults(ndata):
     plt.figure(2)
     plt.scatter( ndata['pred'],ndata['sim'] )
     plt.show()
     
-def POC(steps=3,nplasmids=2,npromoters=2,variants=1,libsize=32):
+def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32, show=False):
     # Generate a DoE-based library and simulate results
-    pw, ds, M, results, par = SimulateDesign(steps, nplasmids, npromoters, variants, libsize)
+    pw, ds, M, results, par, diagnostics = SimulateDesign(steps, nplasmids, npromoters, variants, libsize)
     # Fit a regression (constrast) model
     res, dd = FitModel(M,results)
     # Predict combinations based on the model
     ndata = BestCombinations(res,dd)
     # Validate predictions
-    ValidatePred(ndata, par)
-    PlotResults(ndata)
+    performance = ValidatePred(ndata, par)
+    if show:
+        PlotResults(ndata)
+    return simInfo(diagnostics, performance)
     
-    
+def simInfo(diagnostics, performance, positional=False):
+    head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'cc', 'rms')
+    steps = diagnostics['steps']
+    variants = diagnostics['variants']
+    npromoters = diagnostics['npromoters']
+    nplasmids = diagnostics['nplasmids']
+    libsize = diagnostics['libsize']
+    J = diagnostics['J']
+    pows = diagnostics['pow']
+    rpvs = diagnostics['rpv']
+    factors = diagnostics['factors']
+    v = [len(x) for x in factors]
+    if positional:
+        pos = 1
+    else:
+        pos = 0
+    try:
+        pown = np.mean(pows)
+    except:
+        pown = 0
+    try:
+        rpvn = np.mean(rpvs)
+    except:
+        rpvn = np.nan
+    cc = performance['cc']
+    rms = performance['rms']
+    row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, cc, rms)
+    return row
 
 
