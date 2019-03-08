@@ -16,9 +16,10 @@ import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
 from itertools import product
-import re
+import re, os
 import matplotlib.pyplot as plt
-from sampleCompression import evaldes
+from sampleCompression import evaldes, out
+from viscad.viscad import createnewCad, makePDF
 
 
 
@@ -357,11 +358,10 @@ def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, s
         pw = Construct(par,design)
         target = SelectCurves(pw)
         s = pw.simulate(0,400,1000)
+        if show:
+            pw.plot(s, show=False)
         ds = pd.DataFrame(s,columns=s.colnames)
         results.append( s[target][-1] )
-    if show:
-        plt.figure(1)
-        te.show()
     return pw, ds, M, results, par, diagnostics
 
 # TO DO: multiple random sims per design? (but with same params)
@@ -412,11 +412,12 @@ def ValidatePred(ndata, par, random=100):
                              np.random.choice(ndata.shape[0],
                                               min(ndata.shape[0],random-2),
                                               replace=False) ] )
+    library = []
     results = []
     for i in points:
         design = [ int( re.sub('L', '',x)) for x in np.array( ndata.iloc[i,0:-1] )  ]
-
         pw = Construct(par,design)
+        library.append(pw)
         target = SelectCurves(pw)
         s = pw.simulate(0,400,1000)
         ds = pd.DataFrame(s,columns=s.colnames)
@@ -425,17 +426,42 @@ def ValidatePred(ndata, par, random=100):
     ix = np.logical_not( np.isnan( ndata['sim'] ) )
     cc = np.corrcoef( ndata.loc[ix,'pred'], ndata.loc[ix,'sim'] )[0,1]
     rms = np.sqrt( np.sum((ndata.loc[ix,'pred'] - ndata.loc[ix,'sim'] )**2 )/len(np.where(ix)) )
-    performance = { 'cc': cc, 'rms': rms }
+    performance = { 'cc': cc, 'rms': rms, 'lib': library }
     return performance
+
+def PlotResponse():
+    plt.figure(7)
+    fig = plt.gcf()
+    fig.legend(loc='upper center')
+    te.show()
     
-def PlotResults(ndata):
+def PlotResults(ndata, out):
+    plt.close('all')
+    te.show()
+    plt.xlabel('Time [mins]')
+    plt.ylabel('Concentrations [mol/gDW]')
+    plt.savefig(os.path.join(out,'fig1.pdf'))
+    plt.savefig(os.path.join(out,'fig1.svg'))
     plt.figure(2)
     plt.scatter( ndata['pred'],ndata['sim'] )
+    plt.xlabel('Predicted concentrations [mol/gDW]')
+    plt.ylabel('Observed concentration [mol/gDW]')
     plt.show()
+    plt.savefig(os.path.join(out,'fig2.pdf'))
+    plt.savefig(os.path.join(out,'fig2.svg'))
     
-def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32, show=False):
+def resetPlot():
+    te.show()
+    plt.close('all')
+    
+def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32, show=False, visual=False):
     # Generate a DoE-based library and simulate results
-    pw, ds, M, results, par, diagnostics = SimulateDesign(steps, nplasmids, npromoters, variants, libsize)
+    if show:
+        resetPlot()
+    pw, ds, M, results, par, diagnostics = SimulateDesign(steps, nplasmids, npromoters, variants, libsize, show=show)
+    if visual:
+        createnewCad(M=M,outfile=os.path.join(out,'design.svg'),colvariants=True)
+        makePDF(os.path.join(out,'design.svg'),os.path.join(out,'design.pdf'))
     # Fit a regression (constrast) model
     res, dd = FitModel(M,results)
     # Predict combinations based on the model
@@ -443,11 +469,12 @@ def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32, show=False):
     # Validate predictions
     performance = ValidatePred(ndata, par)
     if show:
-        PlotResults(ndata)
-    return simInfo(diagnostics, performance)
+        PlotResults(ndata, out)
+#        PlotResponse()
+    return simInfo(diagnostics, performance), performance['lib']
     
 def simInfo(diagnostics, performance, positional=False):
-    head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'cc', 'rms')
+    head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'cc', 'rms', 'seed')
     steps = diagnostics['steps']
     variants = diagnostics['variants']
     npromoters = diagnostics['npromoters']
@@ -457,6 +484,7 @@ def simInfo(diagnostics, performance, positional=False):
     pows = diagnostics['pow']
     rpvs = diagnostics['rpv']
     factors = diagnostics['factors']
+    seed = diagnostics['seed'][0]
     v = [len(x) for x in factors]
     if positional:
         pos = 1
@@ -472,7 +500,7 @@ def simInfo(diagnostics, performance, positional=False):
         rpvn = np.nan
     cc = performance['cc']
     rms = performance['rms']
-    row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, cc, rms)
+    row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, cc, rms, seed)
     return row
 
 
