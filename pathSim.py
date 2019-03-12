@@ -16,12 +16,12 @@ import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
 from itertools import product
-import re, os
+import re, os, time, csv
 import matplotlib.pyplot as plt
-from sampleCompression import evaldes, out
+from sampleCompression import evaldes
 from viscad.viscad import createnewCad, makePDF
 
-
+out = os.path.join(os.getenv('DATA'),'doecomp')
 
 def modelHeader():
     antinom = """
@@ -64,7 +64,7 @@ def modelTemplate(promoter):
     antinom += """
           species Activated_promoter in Cell;
           species Growth in Cell;
-          Biomass: Growth -> Substrate; Cell*Kg1*Growth - Cell*Kg2*Substrate
+          Biomass: Growth -> Substrate; Cell*Kgf*Growth - Cell*Kgr*Substrate
            Decay: Growth -> ; Cell*Kd*Growth
           // Reactions:
           //Induc: => Inducer; Cell*Constant_flux__irreversible(1);
@@ -106,8 +106,8 @@ def modelTemplate(promoter):
           Degradation_k2 = 1e-6;
           Catalysis_Km = 0.1;
           Catalysis_kcat = 0.1;
-          Kg1 = 5;
-          Kg2 = 1;
+          Kgf = 5;
+          Kgr = 1;
           Kd = 1e-1;
           
 
@@ -234,13 +234,13 @@ def Construct(par,design):
     for x in np.arange(1,len(design),2):
         # Backbone promoter
         if x == 1:
-            promoters.append( par['Expression'][design[x]] )
+            promoters.append( par['Expression'][design[x]-1] )
         # For the rest of promoters, we assume half of them empty
         else:
-            if design[x]+1 > len(par['Expression']):
+            if design[x] > len(par['Expression']):
                 promoters.append( None )
             else:
-                promoters.append( par['Expression'][design[x]] )
+                promoters.append( par['Expression'][design[x]-1] )
     # Use the information about promoters to create the pathway  
     pw = pathway(promoters)
     initModel( pw, nsteps=len(par['Step']), substrate=1.0 )
@@ -268,7 +268,8 @@ def instance():
         for x in par[group]:
             xmax = par[group][x][1]
             xmin = par[group][x][0]
-            mean = np.random.uniform( xmin, xmax )
+            logmean = np.random.uniform( np.log(xmin), np.log(xmax) )
+            mean = np.exp( logmean )
             std = mean/100.0 + np.random.rand()*(xmax-xmin)/100.0
             vals['_'.join([group,x])] = ( mean,std )
     return vals
@@ -341,8 +342,28 @@ def SelectCurves(pw):
     pw.timeCourseSelections = selections
     pw.steadyStateSelections = selections
     return target
-        
+
+def Assembly(design, steps=3, nplasmids=2, npromoters=2, variants=3):
+    """ Assembly the full pathway """
+    assemble = []
+    n = 0
+    if nplasmids == 1:
+        assemble.append( 0 )
+        n += 1
+    if npromoters == 1:
+        assemble.append( 0 )
+        n += 1
+    if variants == 1:
+        for i in np.arange(0, steps):
+            p = n + 2*i + 1
+            assemble.append( design[p] )
+            assemble.append( 0 )
+    else:
+        assemble.extend( design )
+    return assemble
+       
 def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, show=False):
+    print('Design')
     steps = steps
     variants = variants
     npromoters = npromoters
@@ -352,9 +373,10 @@ def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, s
     par = Parameters(nplasmids,npromoters,steps,variants)
     diagnostics = evaldes( steps, variants, npromoters, nplasmids, libsize, positional )
     M = diagnostics['M']
+    print('Build')
     results = []
     for i in np.arange(M.shape[0]):
-        design = M[i,:]
+        design = Assembly( M[i,:], steps, nplasmids, npromoters, variants  )        
         pw = Construct(par,design)
         target = SelectCurves(pw)
         s = pw.simulate(0,400,1000)
@@ -389,20 +411,28 @@ def FitModel(M,results):
     res = ols.fit()
     return res, dd
 
-def BestCombinations(res, dd):
+def BestCombinations(res, dd, random=1000):
     levels = []
     for j in np.arange(dd.shape[1]-1):
         levels.append( dd.iloc[:,j].unique() )
     comb = []
-    for combo in product( *levels ):
-        comb.append( combo )
+    if random is None:
+        # Full library
+        for combo in product( *levels ):
+            comb.append( combo )
+    else:
+        comb = []
+        for x in levels:
+            comb.append( x[ np.random.randint(len(x), size=random ) ] )
+        comb = np.transpose( np.array(comb) )
+        
     ndata = pd.DataFrame( comb, columns=dd.columns[0:-1] )
     ndata['pred'] = res.predict( ndata )
     ndata = ndata.sort_values(by='pred', ascending=False)
     ndata = ndata.reset_index(drop=True)
     return ndata
 
-def ValidatePred(ndata, par, random=100):
+def ValidatePred(ndata, par, steps, nplasmids, npromoters, variants, random=100):
     """ Simulating all combinations will become too expensive with large sets! """
     """ Alternative ask for a random sample """
     if random is None:
@@ -415,7 +445,8 @@ def ValidatePred(ndata, par, random=100):
     library = []
     results = []
     for i in points:
-        design = [ int( re.sub('L', '',x)) for x in np.array( ndata.iloc[i,0:-1] )  ]
+        select = [ int( re.sub('L', '',x)) for x in np.array( ndata.iloc[i,0:-1] )  ]
+        design = Assembly( select, steps, nplasmids, npromoters, variants  )
         pw = Construct(par,design)
         library.append(pw)
         target = SelectCurves(pw)
@@ -424,9 +455,10 @@ def ValidatePred(ndata, par, random=100):
         results.append( s[target][-1] )
     ndata.loc[points,'sim'] = results
     ix = np.logical_not( np.isnan( ndata['sim'] ) )
-    cc = np.corrcoef( ndata.loc[ix,'pred'], ndata.loc[ix,'sim'] )[0,1]
-    rms = np.sqrt( np.sum((ndata.loc[ix,'pred'] - ndata.loc[ix,'sim'] )**2 )/len(np.where(ix)) )
-    performance = { 'cc': cc, 'rms': rms, 'lib': library }
+    rms = np.sqrt( np.sum( (ndata.loc[ix,'pred'] - ndata.loc[ix,'sim'] )**2 )/len(np.where(ix)) )
+    ols1 = smf.ols(formula="sim ~ pred", data=ndata )
+    res1 = ols1.fit()
+    performance = { 'rms': rms, 'lib': library, 'ndata': ndata, 'res': res1 }
     return performance
 
 def PlotResponse():
@@ -435,46 +467,51 @@ def PlotResponse():
     fig.legend(loc='upper center')
     te.show()
     
-def PlotResults(ndata, out):
+def PlotResults(ndata, out, save=False):
     plt.close('all')
     te.show()
     plt.xlabel('Time [mins]')
     plt.ylabel('Concentrations [mol/gDW]')
-    plt.savefig(os.path.join(out,'fig1.pdf'))
-    plt.savefig(os.path.join(out,'fig1.svg'))
+    if save:
+        plt.savefig(os.path.join(out,'fig1.pdf'))
+        plt.savefig(os.path.join(out,'fig1.svg'))
     plt.figure(2)
     plt.scatter( ndata['pred'],ndata['sim'] )
     plt.xlabel('Predicted concentrations [mol/gDW]')
     plt.ylabel('Observed concentration [mol/gDW]')
     plt.show()
-    plt.savefig(os.path.join(out,'fig2.pdf'))
-    plt.savefig(os.path.join(out,'fig2.svg'))
+    if save:
+        plt.savefig(os.path.join(out,'fig2.pdf'))
+        plt.savefig(os.path.join(out,'fig2.svg'))
     
 def resetPlot():
     te.show()
     plt.close('all')
     
-def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32, show=False, visual=False):
+def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32, 
+        show=False, visual=False, save=False,
+        predSample=1000, simSample=100):
     # Generate a DoE-based library and simulate results
     if show:
         resetPlot()
     pw, ds, M, results, par, diagnostics = SimulateDesign(steps, nplasmids, npromoters, variants, libsize, show=show)
     if visual:
-        createnewCad(M=M,outfile=os.path.join(out,'design.svg'),colvariants=True)
-        makePDF(os.path.join(out,'design.svg'),os.path.join(out,'design.pdf'))
+        createnewCad(M=M,outfile=os.path.join(out,'doedesign.svg'),colvariants=True)
+        makePDF(os.path.join(out,'doedesign.svg'),os.path.join(out,'doedesign.pdf'))
+    print('Test')
     # Fit a regression (constrast) model
     res, dd = FitModel(M,results)
     # Predict combinations based on the model
-    ndata = BestCombinations(res,dd)
+    ndata = BestCombinations( res, dd, random=predSample )
+    print('Learn')
     # Validate predictions
-    performance = ValidatePred(ndata, par)
+    performance = ValidatePred(ndata, par, steps, nplasmids, npromoters, variants, random=simSample )
     if show:
-        PlotResults(ndata, out)
+        PlotResults(ndata, out, save)
 #        PlotResponse()
-    return simInfo(diagnostics, performance), performance['lib']
+    return diagnostics, performance
     
 def simInfo(diagnostics, performance, positional=False):
-    head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'cc', 'rms', 'seed')
     steps = diagnostics['steps']
     variants = diagnostics['variants']
     npromoters = diagnostics['npromoters']
@@ -498,9 +535,59 @@ def simInfo(diagnostics, performance, positional=False):
         rpvn = np.mean(rpvs)
     except:
         rpvn = np.nan
-    cc = performance['cc']
-    rms = performance['rms']
-    row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, cc, rms, seed)
+    rmsd = performance['rms']
+    res = performance['res']
+    rsq = res.rsquared
+    fpv = res.f_pvalue
+    ipv = res.pvalues['Intercept']
+    ppv = res.pvalues['pred']
+    row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, rsq, rmsd, fpv, ipv, ppv, seed)
     return row
 
-
+def performExperiment(predSample=1000, simSample=100, runs=1000):
+    """ Random test
+    """
+    rsteps = [4,6,8,10]
+    rvariants = [1,5,10]
+    rpromoters = [1,3,5]
+    rplasmids = [1,2]
+    rpositional = [False]
+    head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'rsq', 'rmsd', 'fpv', 'ipv', 'ppv', 'seed')
+    timestmp = time.strftime("%Y-%m-%d-%H-%M-%S")
+    outres = os.path.join(out, timestmp+'-resexp.csv')
+    def variations(var):
+        rows = []
+        for j in np.arange(0,runs):
+            x = []
+            for v in var:
+                x.append( np.random.choice(v) )
+            x[-1] = bool(x[-1])
+            rows.append( x )
+        return rows
+    var = [ rsteps, rvariants, rpromoters, rplasmids, rpositional ]
+    with open(outres, 'w') as h:
+        cw = csv.writer(h)
+        cw.writerow( head )
+        for combi in variations( var ):
+            steps, variants, npromoters, nplasmids, positional = combi
+            minlib = steps*max(variants-1, 1)*max(nplasmids-1, 1)*max(npromoters-1,1)
+            libsize = np.random.randint(minlib,min(2*minlib,256)) 
+            print( "Size=%d Steps=%d Variants=%d Promoters=%d Plasmids=%d" % tuple( [libsize] + combi[:-1] ) )
+            try:
+                diagnostics, performance = POC(steps=steps, nplasmids=nplasmids, 
+                                               npromoters=npromoters, variants=variants, 
+                                               libsize=libsize, show=False, visual=False,
+                                               predSample=predSample, simSample=simSample)
+                row = simInfo(diagnostics, performance)
+                print(row)
+                cw.writerow(row)
+                h.flush()
+                print('Success!')
+            except Exception as inst:
+                print(inst.args[0])
+                if inst.args[0].startswith('invalid'):
+                    import pdb
+                    pdb.set_trace()
+                continue
+  
+performExperiment( 1000,100,100 )

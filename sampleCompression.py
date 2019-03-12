@@ -16,10 +16,11 @@ import numpy as np
 from itertools import product
 import csv
 
-out = os.path.join(os.getenv('DATA'),'doecomp')
 
 
-def evaldes( steps, variants, npromoters, nplasmids, libsize, positional ):
+
+def evaldes( steps, variants, npromoters, nplasmids, libsize, positional, 
+             outfile=None ):
 
     plasmids = plasmidList(nplasmids)
     promoters = promoterList(npromoters)
@@ -35,17 +36,19 @@ def evaldes( steps, variants, npromoters, nplasmids, libsize, positional ):
             genes[rid].append(gid)
             
     doe = doeTemplate( tree, plasmids, promoters, genes, positional )
-    outfile = os.path.join(out,'doe.xlsx')
-    doe.to_excel( outfile, index=False )
-    fact, partinfo = read_excel( outfile )
+    if outfile is not None:
+        doe.to_excel( outfile, index=False )
+        fact, partinfo = read_excel( outfile )
+    else:
+        fact, partinfo = read_excel( None, doedf=doe )
     try:
         seed = np.random.randint(10000)
         starts = 1
         RMSE = 10
         alpha = 0.05
-        factors, fnames, diagnostics = OptDes.makeDoeOptDes(fact, outfile, size=libsize, 
-                                                                seed=seed, starts=starts,
-                                                                RMSE= RMSE, alpha=alpha)
+        factors, fnames, diagnostics = OptDes.makeDoeOptDes(fact, size=libsize, 
+                                                            seed=seed, starts=starts,
+                                                            RMSE= RMSE, alpha=alpha)
     except:
         raise Exception("No solution")
     diagnostics['steps'] = steps
@@ -56,6 +59,7 @@ def evaldes( steps, variants, npromoters, nplasmids, libsize, positional ):
     return diagnostics
 
 if __name__ == '__main__':
+    out = os.path.join(os.getenv('DATA'),'doecomp')
     
     TEST = 3   
         
