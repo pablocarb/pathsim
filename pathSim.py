@@ -37,16 +37,29 @@ def modelHeader():
         function Hill_Cooperativity(substrate, Shalve, V, h)
           V*(substrate/Shalve)^h/(1 + (substrate/Shalve)^h);
         end
+        
+        function Hill_Coop2(inducer,promoter,n,kf1,kr1)
+            kf1*inducer^n - kr1*promoter;
+        end
+            
+            
     """
     return antinom
 
-def modelTemplate(promoter):
+def modelTemplate(promoter, decay=False):
     """ Nsteps basic linear pathway defined using tellurium """
     antinom = ''
     if promoter is not None:
-        antinom += """
-            model Prom_Model()
-        """
+        if decay:           
+            antinom += """
+                model Prom_Upstream_Model()
+                """
+        else:
+            antinom += """
+                model Prom_Model()
+                """
+
+
     else:
         antinom += """
             model Noprom_Model()
@@ -63,16 +76,23 @@ def modelTemplate(promoter):
           """
     antinom += """
           species Activated_promoter in Cell;
-          species Growth in Cell;
-          Biomass: Growth -> Substrate; Cell*Kgf*Growth - Cell*Kgr*Substrate
-           Decay: Growth -> ; Cell*Kd*Growth
+//          species Growth in Cell;
+//          Biomass: Growth -> Substrate; Cell*Kgf*Growth - Cell*Kgr*Substrate
+//        Decay: Growth -> ; Cell*Kd*Growth
+"""
+    if decay:
+        antinom += """
+          Substrate -> ; Cell*Kd*Substrate;
+        """
+    antinom += """
           // Reactions:
           //Induc: => Inducer; Cell*Constant_flux__irreversible(1);
           // See doi: https://doi.org/10.1101/360040 for modeling the induction using the Hill function
           """
     if promoter is not None:
         antinom += """
-          Induction: Inducer => Activated_promoter; Copy_number*Cell*Hill_Cooperativity(Inducer, Induction_Shalve, Induction_Vi, Induction_h);
+//          Induction: Inducer => Activated_promoter; Cell*Hill_Cooperativity(Inducer, Induction_Shalve, Induction_Vi, Induction_h);
+          Induction: Inducer => Activated_promoter; Cell*Hill_Coop2(Inducer, Activated_promoter, Induction_n, Induction_kf1, Induction_kr1);
           """
     antinom += """
           Expression: Activated_promoter => Enzyme; Copy_number*Cell*Expression_k1*Activated_promoter;
@@ -81,35 +101,41 @@ def modelTemplate(promoter):
           Catalysis: Substrate => Product; Cell*Henri_Michaelis_Menten__irreversible(Substrate, Enzyme, Catalysis_Km, Catalysis_kcat);
 
          // Species initializations:
-          Substrate = 0.5;
+          Substrate = 0.5*1e-9;
           Product = 0;
           Enzyme = 0;
           """
     if promoter is not None:
         antinom += """
-          Inducer = 1;
+          Inducer = 1e-2;
          """
+    if decay:
+        antinom += """
+            Kd = 1e-4;
+        """
+        
     antinom += """
           Activated_promoter = 0;
           Copy_number = 1;
 
           // Compartment initializations:
           Cell = 1;
-          Growth = 1;
+//          Growth = 1;
 
           // Variable initializations:
-          Induction_Shalve = 1e-1;
-          Induction_Vi = 1e7;
-          Induction_h = 1.85;
+//          Induction_Shalve = 1e-1;
+//          Induction_Vi = 1e7;
+ //         Induction_h = 1.85;
+          Induction_n = 1.85;
+          Induction_kf1 =  1e3;
+          Induction_kr1 = 1e-1;
           Expression_k1 = 1e6;
-          Leakage_vl = 1e-9;
+          Leakage_vl = 0;
           Degradation_k2 = 1e-6;
           Catalysis_Km = 0.1;
           Catalysis_kcat = 0.1;
           Kgf = 5;
-          Kgr = 1;
-          Kd = 1e-1;
-          
+          Kgr = 1;          
 
           // Other declarations:
           const Cell;
@@ -122,13 +148,17 @@ def modelTemplate(promoter):
         
 def pathway(promoters):         
     antinom = modelHeader()
+    antinom += modelTemplate(1, True)  
     antinom += modelTemplate(1)
     antinom += modelTemplate(None)    
     antinom += "model *Big_Model()"+"\n"
     for i in np.arange(len(promoters)):
         p = promoters[i]
         if p is not None:
-            antinom += "\t"+"m%d: Prom_Model();" % (i+1,)
+            if i == 0:
+                antinom += "\t"+"m%d: Prom_Upstream_Model();" % (i+1,)
+            else:        
+                antinom += "\t"+"m%d: Prom_Model();" % (i+1,)
         else:
             antinom += "\t"+"m%d: Noprom_Model();" % (i+1,)
         antinom += "\n"
@@ -183,19 +213,24 @@ def ranges():
     """ Define global ranges for random parameters """
     param = {
         'Catalysis': {
-                'Km': [0.1, 100],
-                'kcat': [0.1, 10] 
+                'Km': [1e-3, 1e-3], #[1e2, 1e3],
+                'kcat': [1, 1], #[1, 1] 
                 },
         'Degradation': {
-                'k2': [1e-6, 1e-6]
+                'k2': [1e-3,1e-3]#[1e-3, 1e-3]
                 },
+#        'Induction': {
+#                'Shalve': [0.1, 0.1],
+#                'Vi': [1e6, 1e7],
+#                'h': [2, 4]
+#                },
         'Induction': {
-                'Shalve': [0.1, 0.1],
-                'Vi': [1e6, 1e7],
-                'h': [2, 4]
+                'n': [2, 2],
+                'kf1': [1e3, 1e3],
+                'kr1': [1e-2,1e-2]
                 },
         'Leakage': {
-                'vl': [1e-9, 1e-9]
+                'vl': [1e-12,1e-12] #[1e-10,1e-10]#[1e-9, 1e-9]
                 },
         }
     return param
@@ -207,8 +242,8 @@ def libraries(nprom, nori):
     """
     
     param = {
-        'Expression': 1e3*np.random.randint(1,1000,nprom),
-        'Copy_number': np.random.randint(1,100,nori)
+        'Expression': np.power( 10, 3*np.random.random(nprom) ),
+        'Copy_number': 1e-3*np.power( 10, 2*np.random.random(nori) )
             }
     for y in param:
         param[y].sort()
@@ -243,13 +278,21 @@ def Construct(par,design):
                 promoters.append( par['Expression'][design[x]-1] )
     # Use the information about promoters to create the pathway  
     pw = pathway(promoters)
-    initModel( pw, nsteps=len(par['Step']), substrate=1.0 )
+    initModel( pw, nsteps=len(par['Step']), substrate=1.0*1e-9 )
     # Init model??
     # Set up the copy number
     for i in np.arange(len(par['Step'])):
         pw['m'+str(i+1)+'_Copy_number'] = float(par['Copy_number'][design[0]])
+    for i in np.arange(len(par['Step'])):
+        if promoters[i] is not None:
+            pw['m'+str(i+1)+'_Expression_k1'] = promoters[i]
+        else:
+            j = i-1
+            while promoters[j] is None and j > 0:
+                j -= 1
+            pw['m'+str(i+1)+'_Expression_k1'] = promoters[j]
+            
     # Set up the gene
-
     for i in np.arange(len(par['Step'])):
         enzyme = par['Step'][i][design[2+i*2]]
         for val in enzyme:
@@ -268,13 +311,16 @@ def instance():
         for x in par[group]:
             xmax = par[group][x][1]
             xmin = par[group][x][0]
-            logmean = np.random.uniform( np.log(xmin), np.log(xmax) )
-            mean = np.exp( logmean )
+            if xmax == xmin:
+                mean = xmin
+            else:
+                logmean = np.random.uniform( np.log(xmin), np.log(xmax) )
+                mean = np.exp( logmean )
             std = mean/100.0 + np.random.rand()*(xmax-xmin)/100.0
             vals['_'.join([group,x])] = ( mean,std )
     return vals
             
-def initModel(model, substrate=0.0, nsteps=5):
+def initModel(model, substrate=0.0, nsteps=5, inducer=1e-6):
     """ Each step in the pathway requires the following parameter definitions:
             - Induction: Shalve, Vi, h
             - Expression: k1
@@ -289,7 +335,7 @@ def initModel(model, substrate=0.0, nsteps=5):
         model['m'+str(step+1)+'_Substrate'] = 0
         model['m'+str(step+1)+'_Enzyme'] = 0
         try:
-            model['m'+str(step+1)+'_Inducer'] = 1
+            model['m'+str(step+1)+'_Inducer'] = inducer
         except:
             pass
         try:
@@ -321,6 +367,8 @@ class metPath:
                 for x in v[group]:
                     (mean, std) = v[group][x]
                     p = np.random.normal( mean, std )
+                    import pdb
+                    pdb.set_trace()
                     param = 'm{}_{}_{}'.format( i+1, group, x )
                     self.model[ param ] = p      
         initModel( self.model )
@@ -334,7 +382,7 @@ def SelectCurves(pw):
     selections = []
     target = None
     for i in pw.timeCourseSelections:
-        if i.endswith('Inducer]') or i.endswith('promoter]') or  i.endswith('Enzyme]') or i.endswith('Growth]'):
+        if i.endswith('Inducer]') or i.endswith('promoter]')  or  i.endswith('Enzyme]') or i.endswith('Growth]'):
             continue
         selections.append(i)
         if i.endswith('Product]'):
@@ -349,20 +397,37 @@ def Assembly(design, steps=3, nplasmids=2, npromoters=2, variants=3):
     n = 0
     if nplasmids == 1:
         assemble.append( 0 )
+    else:
+        assemble.append( design[n] )
         n += 1
     if npromoters == 1:
         assemble.append( 0 )
-        n += 1
-    if variants == 1:
-        for i in np.arange(0, steps):
-            p = n + 2*i + 1
-            assemble.append( design[p] )
-            assemble.append( 0 )
     else:
+        assemble.append( design[n] )
+        n += 1
+    if variants == 1: 
+        if npromoters > 1:
+            for i in np.arange(1, steps):
+                assemble.append(0)
+                p = n + i -1 
+                assemble.append( design[p] )
+            assemble.append( 0 )
+        else:
+            for i in np.arange(1, steps):
+                assemble.append(0)
+                assemble.append( 0 )
+            assemble.append( 0 )
+    elif npromoters > 1:
         assemble.extend( design )
+    else:
+        for i in np.arange(1, steps):
+            assemble.append( design[p] )
+            p = n + i -1
+            assemble.append(0)
+        assemble.append( design[p+1] )
     return assemble
        
-def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, show=False):
+def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, show=False, timespan=3600):
     print('Design')
     steps = steps
     variants = variants
@@ -379,9 +444,9 @@ def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, s
         design = Assembly( M[i,:], steps, nplasmids, npromoters, variants  )        
         pw = Construct(par,design)
         target = SelectCurves(pw)
-        s = pw.simulate(0,400,1000)
+        s = pw.simulate(0,timespan,1000)
         if show:
-            pw.plot(s, show=False)
+            pw.plot(s, show=False ,xlabel='t [s]', ylabel="conc [M]")
         ds = pd.DataFrame(s,columns=s.colnames)
         results.append( s[target][-1] )
     return pw, ds, M, results, par, diagnostics
@@ -432,7 +497,7 @@ def BestCombinations(res, dd, random=1000):
     ndata = ndata.reset_index(drop=True)
     return ndata
 
-def ValidatePred(ndata, par, steps, nplasmids, npromoters, variants, random=100):
+def ValidatePred(ndata, par, steps, nplasmids, npromoters, variants, random=100, timespan=3600):
     """ Simulating all combinations will become too expensive with large sets! """
     """ Alternative ask for a random sample """
     if random is None:
@@ -450,7 +515,7 @@ def ValidatePred(ndata, par, steps, nplasmids, npromoters, variants, random=100)
         pw = Construct(par,design)
         library.append(pw)
         target = SelectCurves(pw)
-        s = pw.simulate(0,400,1000)
+        s = pw.simulate(0,timespan,1000)
         ds = pd.DataFrame(s,columns=s.colnames)
         results.append( s[target][-1] )
     ndata.loc[points,'sim'] = results
@@ -463,9 +528,9 @@ def ValidatePred(ndata, par, steps, nplasmids, npromoters, variants, random=100)
 
 def PlotResponse():
     plt.figure(7)
+    te.show()
     fig = plt.gcf()
     fig.legend(loc='upper center')
-    te.show()
     
 def PlotResults(ndata, out, save=False):
     plt.close('all')
@@ -490,11 +555,11 @@ def resetPlot():
     
 def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32, 
         show=False, visual=False, save=False,
-        predSample=1000, simSample=100):
+        predSample=1000, simSample=100, timespan=3600):
     # Generate a DoE-based library and simulate results
     if show:
         resetPlot()
-    pw, ds, M, results, par, diagnostics = SimulateDesign(steps, nplasmids, npromoters, variants, libsize, show=show)
+    pw, ds, M, results, par, diagnostics = SimulateDesign(steps, nplasmids, npromoters, variants, libsize, show=show, timespan=timespan)
     if visual:
         createnewCad(M=M,outfile=os.path.join(out,'doedesign.svg'),colvariants=True)
         makePDF(os.path.join(out,'doedesign.svg'),os.path.join(out,'doedesign.pdf'))
@@ -505,7 +570,7 @@ def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32,
     ndata = BestCombinations( res, dd, random=predSample )
     print('Learn')
     # Validate predictions
-    performance = ValidatePred(ndata, par, steps, nplasmids, npromoters, variants, random=simSample )
+    performance = ValidatePred(ndata, par, steps, nplasmids, npromoters, variants, random=simSample, timespan=timespan )
     if show:
         PlotResults(ndata, out, save)
 #        PlotResponse()
@@ -589,5 +654,7 @@ def performExperiment(predSample=1000, simSample=100, runs=1000):
                     import pdb
                     pdb.set_trace()
                 continue
-  
-performExperiment( 1000,100,100 )
+
+RUN = False
+if RUN:  
+    performExperiment( 1000,100,100 )
