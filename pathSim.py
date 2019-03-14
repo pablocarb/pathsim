@@ -632,7 +632,10 @@ def performExperiment(predSample=1000, simSample=100, runs=1000, out='.'):
     rpositional = [False]
     head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'rsq', 'rmsd', 'fpv', 'ipv', 'ppv', 'seed')
     timestmp = time.strftime("%Y-%m-%d-%H-%M-%S")
-    outres = os.path.join(out, timestmp+'-resexp.csv')
+    if os.getenv('JOBIDENTIFIER') is not None:
+        outres = os.path.join(out, timestmp+'-'+os.gentenv('JOBIDENTIFIER')+'-resexp.csv')
+    else:        
+        outres = os.path.join(out, timestmp+'-resexp.csv')
     var = [ rsteps, rvariants, rpromoters, rplasmids, rpositional ]
     with open(outres, 'w') as h:
         cw = csv.writer(h)
