@@ -21,7 +21,6 @@ import matplotlib.pyplot as plt
 from sampleCompression import evaldes
 from viscad.viscad import createnewCad, makePDF
 
-out = os.path.join(os.getenv('DATA'),'doecomp')
 
 def modelHeader():
     antinom = """
@@ -213,11 +212,11 @@ def ranges():
     """ Define global ranges for random parameters """
     param = {
         'Catalysis': {
-                'Km': [1e-3, 1e-3], #[1e2, 1e3],
-                'kcat': [1, 1], #[1, 1] 
+                'Km': [1e-2, 1e-4], # Center=1 mM  #[1e2, 1e3],
+                'kcat': [1, 1e3], # Center= 100 s^-1 #1, 1] 
                 },
         'Degradation': {
-                'k2': [1e-3,1e-3]#[1e-3, 1e-3]
+                'k2': [1e-6,1e-6]#[1e-3, 1e-3]
                 },
 #        'Induction': {
 #                'Shalve': [0.1, 0.1],
@@ -226,7 +225,7 @@ def ranges():
 #                },
         'Induction': {
                 'n': [2, 2],
-                'kf1': [1e3, 1e3],
+                'kf1': [1e1, 1e1],
                 'kr1': [1e-2,1e-2]
                 },
         'Leakage': {
@@ -242,8 +241,8 @@ def libraries(nprom, nori):
     """
     
     param = {
-        'Expression': np.power( 10, 3*np.random.random(nprom) ),
-        'Copy_number': 1e-3*np.power( 10, 2*np.random.random(nori) )
+        'Expression': 1e-8*np.power( 10, np.random.random(nprom) ),
+        'Copy_number': np.power( 10, 2*np.random.random(nori) )
             }
     for y in param:
         param[y].sort()
@@ -251,7 +250,6 @@ def libraries(nprom, nori):
 
 def Parameters(nori,nprom,nsteps,nvariants):
     """ Define de parameters and ranges """
-    """ TO DO: variants!! """
     par = {}
     plib = libraries(nprom,nori)
     par['Copy_number'] = plib['Copy_number']
@@ -264,7 +262,7 @@ def Parameters(nori,nprom,nsteps,nvariants):
         par['Step'].append( vals )
     return par
             
-def Construct(par,design):
+def Construct(par,design,noise=False):
     promoters = []
     for x in np.arange(1,len(design),2):
         # Backbone promoter
@@ -278,7 +276,7 @@ def Construct(par,design):
                 promoters.append( par['Expression'][design[x]-1] )
     # Use the information about promoters to create the pathway  
     pw = pathway(promoters)
-    initModel( pw, nsteps=len(par['Step']), substrate=1.0*1e-9 )
+    initModel( pw, nsteps=len(par['Step']), substrate=1.0*1e-3 )
     # Init model??
     # Set up the copy number
     for i in np.arange(len(par['Step'])):
@@ -297,7 +295,10 @@ def Construct(par,design):
         enzyme = par['Step'][i][design[2+i*2]]
         for val in enzyme:
             (mean, std) = enzyme[val]
-            p = np.random.normal( mean, std )
+            if noise:
+                p = np.random.normal( mean, std )
+            else:
+                p = mean
             param = 'm{}_{}'.format( i+1, val )
             pw[ param ] = p
     return pw
@@ -320,7 +321,7 @@ def instance():
             vals['_'.join([group,x])] = ( mean,std )
     return vals
             
-def initModel(model, substrate=0.0, nsteps=5, inducer=1e-6):
+def initModel(model, substrate=0.0, nsteps=5, inducer=100e-6):
     """ Each step in the pathway requires the following parameter definitions:
             - Induction: Shalve, Vi, h
             - Expression: k1
@@ -392,7 +393,7 @@ def SelectCurves(pw):
     return target
 
 def Assembly(design, steps=3, nplasmids=2, npromoters=2, variants=3):
-    """ Assembly the full pathway """
+    """ Assembly the full pathway: provide the index at each position """
     assemble = []
     n = 0
     if nplasmids == 1:
@@ -418,8 +419,9 @@ def Assembly(design, steps=3, nplasmids=2, npromoters=2, variants=3):
                 assemble.append( 0 )
             assemble.append( 0 )
     elif npromoters > 1:
-        assemble.extend( design )
+        assemble.extend( design[n:] )
     else:
+        p = -1
         for i in np.arange(1, steps):
             assemble.append( design[p] )
             p = n + i -1
@@ -530,7 +532,7 @@ def PlotResponse():
     plt.figure(7)
     te.show()
     fig = plt.gcf()
-    fig.legend(loc='upper center')
+#    fig.legend(loc='upper center')
     
 def PlotResults(ndata, out, save=False):
     plt.close('all')
@@ -586,7 +588,7 @@ def simInfo(diagnostics, performance, positional=False):
     pows = diagnostics['pow']
     rpvs = diagnostics['rpv']
     factors = diagnostics['factors']
-    seed = diagnostics['seed'][0]
+    seed = diagnostics['seed']
     v = [len(x) for x in factors]
     if positional:
         pos = 1
@@ -609,18 +611,11 @@ def simInfo(diagnostics, performance, positional=False):
     row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, rsq, rmsd, fpv, ipv, ppv, seed)
     return row
 
-def performExperiment(predSample=1000, simSample=100, runs=1000):
+def performExperiment(predSample=1000, simSample=100, runs=1000, out='.'):
     """ Random test
     """
-    rsteps = [4,6,8,10]
-    rvariants = [1,5,10]
-    rpromoters = [1,3,5]
-    rplasmids = [1,2]
-    rpositional = [False]
-    head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'rsq', 'rmsd', 'fpv', 'ipv', 'ppv', 'seed')
-    timestmp = time.strftime("%Y-%m-%d-%H-%M-%S")
-    outres = os.path.join(out, timestmp+'-resexp.csv')
     def variations(var):
+        """ Random sampling of the design space """
         rows = []
         for j in np.arange(0,runs):
             x = []
@@ -629,6 +624,15 @@ def performExperiment(predSample=1000, simSample=100, runs=1000):
             x[-1] = bool(x[-1])
             rows.append( x )
         return rows
+
+    rsteps = [4,6,8,10]
+    rvariants = [1,5,10]
+    rpromoters = [1,3,5]
+    rplasmids = [1,2]
+    rpositional = [False]
+    head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'rsq', 'rmsd', 'fpv', 'ipv', 'ppv', 'seed')
+    timestmp = time.strftime("%Y-%m-%d-%H-%M-%S")
+    outres = os.path.join(out, timestmp+'-resexp.csv')
     var = [ rsteps, rvariants, rpromoters, rplasmids, rpositional ]
     with open(outres, 'w') as h:
         cw = csv.writer(h)
@@ -636,7 +640,9 @@ def performExperiment(predSample=1000, simSample=100, runs=1000):
         for combi in variations( var ):
             steps, variants, npromoters, nplasmids, positional = combi
             minlib = steps*max(variants-1, 1)*max(nplasmids-1, 1)*max(npromoters-1,1)
-            libsize = np.random.randint(minlib,min(2*minlib,256)) 
+            libsize = np.random.randint(64)
+            if libsize < minlib:
+                libsize = minlib
             print( "Size=%d Steps=%d Variants=%d Promoters=%d Plasmids=%d" % tuple( [libsize] + combi[:-1] ) )
             try:
                 diagnostics, performance = POC(steps=steps, nplasmids=nplasmids, 
@@ -655,6 +661,6 @@ def performExperiment(predSample=1000, simSample=100, runs=1000):
                     pdb.set_trace()
                 continue
 
-RUN = False
+RUN = True
 if RUN:  
-    performExperiment( 1000,100,100 )
+    performExperiment( 1000,100,100, out = os.path.join(os.getenv('DATA'),'doecomp') )
