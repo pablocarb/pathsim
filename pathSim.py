@@ -611,7 +611,7 @@ def simInfo(diagnostics, performance, positional=False):
     row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, rsq, rmsd, fpv, ipv, ppv, seed)
     return row
 
-def performExperiment(predSample=1000, simSample=100, runs=1000, out='.'):
+def performExperiment(predSample=1000, simSample=100, runs=1000, maxlib=256, out='.'):
     """ Random test
     """
     def variations(var):
@@ -643,7 +643,7 @@ def performExperiment(predSample=1000, simSample=100, runs=1000, out='.'):
         for combi in variations( var ):
             steps, variants, npromoters, nplasmids, positional = combi
             minlib = steps*max(variants-1, 1)*max(nplasmids-1, 1)*max(npromoters-1,1)
-            libsize = np.random.randint(256)
+            libsize = np.random.randint(maxlib)
             if libsize < minlib:
                 libsize = minlib
             print( "Size=%d Steps=%d Variants=%d Promoters=%d Plasmids=%d" % tuple( [libsize] + combi[:-1] ) )
@@ -668,10 +668,12 @@ def arguments():
     parser = argparse.ArgumentParser(description='Learning for optimal design. Pablo Carbonell, SYNBIOCHEM, 2019')
     parser.add_argument('-runs', type=int, default=0,
                         help='Number of runs')
+    parser.add_argument('-maxlib', type=int, default=256,
+                        help='Number of runs')
     return parser
 
 if __name__ == "__main__":
     parser = arguments()    
     arg = parser.parse_args()
     if arg.runs > 0:
-        performExperiment( 1000,100,runs=arg.runs, out = os.path.join(os.getenv('DATA'),'doecomp') )
+        performExperiment( 1000, 100,runs=arg.runs, maxlib=arg.maxlib, out = os.path.join(os.getenv('DATA'),'doecomp') )
