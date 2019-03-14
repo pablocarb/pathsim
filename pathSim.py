@@ -16,7 +16,7 @@ import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
 from itertools import product
-import re, os, time, csv
+import re, os, time, csv, argparse
 import matplotlib.pyplot as plt
 from sampleCompression import evaldes
 from viscad.viscad import createnewCad, makePDF
@@ -643,7 +643,7 @@ def performExperiment(predSample=1000, simSample=100, runs=1000, out='.'):
         for combi in variations( var ):
             steps, variants, npromoters, nplasmids, positional = combi
             minlib = steps*max(variants-1, 1)*max(nplasmids-1, 1)*max(npromoters-1,1)
-            libsize = np.random.randint(64)
+            libsize = np.random.randint(256)
             if libsize < minlib:
                 libsize = minlib
             print( "Size=%d Steps=%d Variants=%d Promoters=%d Plasmids=%d" % tuple( [libsize] + combi[:-1] ) )
@@ -664,6 +664,14 @@ def performExperiment(predSample=1000, simSample=100, runs=1000, out='.'):
                     pdb.set_trace()
                 continue
 
-RUN = True
-if RUN:  
-    performExperiment( 1000,100,100, out = os.path.join(os.getenv('DATA'),'doecomp') )
+def arguments():
+    parser = argparse.ArgumentParser(description='Learning for optimal design. Pablo Carbonell, SYNBIOCHEM, 2019')
+    parser.add_argument('-runs', type=int, default=0,
+                        help='Number of runs')
+    return parser
+
+if __name__ == "__main__":
+    parser = arguments()    
+    arg = parser.parse_args()
+    if arg.runs > 0:
+        performExperiment( 1000,100,runs=arg.runs, out = os.path.join(os.getenv('DATA'),'doecomp') )
