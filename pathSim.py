@@ -15,6 +15,7 @@ import tellurium as te
 import numpy as np
 import pandas as pd
 import statsmodels.formula.api as smf
+from statsmodels.tools.eval_measures import iqr, rmse
 from itertools import product
 import re, os, time, csv, argparse
 import matplotlib.pyplot as plt
@@ -522,10 +523,15 @@ def ValidatePred(ndata, par, steps, nplasmids, npromoters, variants, random=100,
         results.append( s[target][-1] )
     ndata.loc[points,'sim'] = results
     ix = np.logical_not( np.isnan( ndata['sim'] ) )
-    rms = np.sqrt( np.sum( (ndata.loc[ix,'pred'] - ndata.loc[ix,'sim'] )**2 )/len(np.where(ix)) )
+    sim = ndata.loc[ix,'sim']
+    pred = ndata.loc[ix,'pred']
+    rms = rmse(pred, sim)
+    iq = iqr(pred,sim)
+    ym = np.mean(sim)
     ols1 = smf.ols(formula="sim ~ pred", data=ndata )
     res1 = ols1.fit()
-    performance = { 'rms': rms, 'lib': library, 'ndata': ndata, 'res': res1 }
+    performance = { 'rms': rms, 'lib': library, 'ndata': ndata, 'res': res1, 
+                   'iqr': float(iq), 'ym': ym }
     return performance
 
 def PlotResponse():
@@ -603,18 +609,20 @@ def simInfo(diagnostics, performance, positional=False):
     except:
         rpvn = np.nan
     rmsd = performance['rms']
+    iqr = performance['iqr']
+    ym = performance['ym']
     res = performance['res']
     rsq = res.rsquared
     fpv = res.f_pvalue
     ipv = res.pvalues['Intercept']
     ppv = res.pvalues['pred']
-    row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, rsq, rmsd, fpv, ipv, ppv, seed)
+    row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, rsq, rmsd, fpv, ipv, ppv, iqr, ym, seed)
     return row
 
 def performExperiment(predSample=1000, simSample=100, runs=1000, maxlib=256, out='.'):
     """ Random test
     """
-    def variations(var):
+    def variations(var, runs):
         """ Random sampling of the design space """
         rows = []
         for j in np.arange(0,runs):
@@ -630,7 +638,7 @@ def performExperiment(predSample=1000, simSample=100, runs=1000, maxlib=256, out
     rpromoters = [1,3,5]
     rplasmids = [1,2]
     rpositional = [False]
-    head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'rsq', 'rmsd', 'fpv', 'ipv', 'ppv', 'seed')
+    head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'rsq', 'rmsd', 'fpv', 'ipv', 'ppv', 'iqr', 'ym', 'seed')
     timestmp = time.strftime("%Y-%m-%d-%H-%M-%S")
     if os.getenv('JOBIDENTIFIER') is not None:
         outres = os.path.join(out, timestmp+'-'+os.getenv('JOBIDENTIFIER')+'-resexp.csv')
@@ -640,12 +648,16 @@ def performExperiment(predSample=1000, simSample=100, runs=1000, maxlib=256, out
     with open(outres, 'w') as h:
         cw = csv.writer(h)
         cw.writerow( head )
-        for combi in variations( var ):
+        fullvar = variations(var, 1000*runs )
+        nr = 1
+        for combi in fullvar:
             steps, variants, npromoters, nplasmids, positional = combi
             minlib = steps*max(variants-1, 1)*max(nplasmids-1, 1)*max(npromoters-1,1)
             libsize = np.random.randint(maxlib)
             if libsize < minlib:
                 libsize = minlib
+            if libsize > maxlib:
+                continue
             print( "Size=%d Steps=%d Variants=%d Promoters=%d Plasmids=%d" % tuple( [libsize] + combi[:-1] ) )
             try:
                 diagnostics, performance = POC(steps=steps, nplasmids=nplasmids, 
@@ -663,6 +675,9 @@ def performExperiment(predSample=1000, simSample=100, runs=1000, maxlib=256, out
                     import pdb
                     pdb.set_trace()
                 continue
+            nr += 1
+            if nr == runs:
+                break
 
 def arguments():
     parser = argparse.ArgumentParser(description='Learning for optimal design. Pablo Carbonell, SYNBIOCHEM, 2019')
