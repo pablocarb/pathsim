@@ -19,7 +19,8 @@ from statsmodels.tools.eval_measures import iqr, rmse
 from itertools import product
 import re, os, time, csv, argparse
 import matplotlib.pyplot as plt
-from sampleCompression import evaldes
+#from sampleCompression import evaldes
+from doebase.OptDes import evaldes
 from viscad.viscad import createnewCad, makePDF
 
 
@@ -430,7 +431,7 @@ def Assembly(design, steps=3, nplasmids=2, npromoters=2, variants=3):
         assemble.append( design[p+1] )
     return assemble
        
-def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, show=False, timespan=3600):
+def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, show=False, timespan=3600, random=False):
     print('Design')
     steps = steps
     variants = variants
@@ -439,7 +440,7 @@ def SimulateDesign(steps=3, nplasmids=2, npromoters=2, variants=3, libsize=32, s
     libsize = libsize
     positional = False
     par = Parameters(nplasmids,npromoters,steps,variants)
-    diagnostics = evaldes( steps, variants, npromoters, nplasmids, libsize, positional )
+    diagnostics = evaldes( steps, variants, npromoters, nplasmids, libsize, positional, random=random )
     M = diagnostics['M']
     print('Build')
     results = []
@@ -563,11 +564,13 @@ def resetPlot():
     
 def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32, 
         show=False, visual=False, save=False,
-        predSample=1000, simSample=100, timespan=3600):
+        predSample=1000, simSample=100, timespan=3600, random=False):
     # Generate a DoE-based library and simulate results
     if show:
         resetPlot()
-    pw, ds, M, results, par, diagnostics = SimulateDesign(steps, nplasmids, npromoters, variants, libsize, show=show, timespan=timespan)
+    pw, ds, M, results, par, diagnostics = SimulateDesign(steps, nplasmids, npromoters, 
+                                                          variants, libsize, show=show, 
+                                                          timespan=timespan, random=random)
     if visual:
         createnewCad(M=M,outfile=os.path.join(out,'doedesign.svg'),colvariants=True)
         makePDF(os.path.join(out,'doedesign.svg'),os.path.join(out,'doedesign.pdf'))
@@ -619,7 +622,7 @@ def simInfo(diagnostics, performance, positional=False):
     row = (steps, variants, npromoters, nplasmids, pos, libsize, J, np.prod(v), pown, rpvn, rsq, rmsd, fpv, ipv, ppv, iqr, ym, seed)
     return row
 
-def performExperiment(predSample=1000, simSample=100, runs=1000, maxlib=256, out='.'):
+def performExperiment(predSample=1000, simSample=100, runs=1000, maxlib=256, out='.', random=False):
     """ Random test
     """
     def variations(var, runs):
@@ -640,10 +643,13 @@ def performExperiment(predSample=1000, simSample=100, runs=1000, maxlib=256, out
     rpositional = [False]
     head = ('steps', 'variants', 'npromoters', 'nplasmids', 'pos', 'libsize', 'eff', 'space', 'pow', 'rpv', 'rsq', 'rmsd', 'fpv', 'ipv', 'ppv', 'iqr', 'ym', 'seed')
     timestmp = time.strftime("%Y-%m-%d-%H-%M-%S")
+    suffix = '-resexp.csv'
+    if random:
+        suffix = '-rand'+suffix
     if os.getenv('JOBIDENTIFIER') is not None:
-        outres = os.path.join(out, timestmp+'-'+os.getenv('JOBIDENTIFIER')+'-resexp.csv')
+        outres = os.path.join(out, timestmp+'-'+os.getenv('JOBIDENTIFIER')+suffix)
     else:        
-        outres = os.path.join(out, timestmp+'-resexp.csv')
+        outres = os.path.join(out, timestmp+suffix)
     var = [ rsteps, rvariants, rpromoters, rplasmids, rpositional ]
     with open(outres, 'w') as h:
         cw = csv.writer(h)
@@ -663,7 +669,8 @@ def performExperiment(predSample=1000, simSample=100, runs=1000, maxlib=256, out
                 diagnostics, performance = POC(steps=steps, nplasmids=nplasmids, 
                                                npromoters=npromoters, variants=variants, 
                                                libsize=libsize, show=False, visual=False,
-                                               predSample=predSample, simSample=simSample)
+                                               predSample=predSample, simSample=simSample,
+                                               random=random)
                 row = simInfo(diagnostics, performance)
                 print(row)
                 cw.writerow(row)
@@ -685,10 +692,12 @@ def arguments():
                         help='Number of runs')
     parser.add_argument('-maxlib', type=int, default=256,
                         help='Number of runs')
+    parser.add_argument('-random', action='store_true',
+                        help='Random, non optimal design')
     return parser
 
 if __name__ == "__main__":
     parser = arguments()    
     arg = parser.parse_args()
     if arg.runs > 0:
-        performExperiment( 1000, 100,runs=arg.runs, maxlib=arg.maxlib, out = os.path.join(os.getenv('DATA'),'doecomp') )
+        performExperiment( 1000, 100,runs=arg.runs, maxlib=arg.maxlib, out = os.path.join(os.getenv('DATA'),'doecomp'), random=arg.random )

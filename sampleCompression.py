@@ -20,7 +20,7 @@ import csv
 
 
 def evaldes( steps, variants, npromoters, nplasmids, libsize, positional, 
-             outfile=None ):
+             outfile=None, random=False ):
 
     plasmids = plasmidList(nplasmids)
     promoters = promoterList(npromoters)
@@ -48,7 +48,8 @@ def evaldes( steps, variants, npromoters, nplasmids, libsize, positional,
         alpha = 0.05
         factors, fnames, diagnostics = OptDes.makeDoeOptDes(fact, size=libsize, 
                                                             seed=seed, starts=starts,
-                                                            RMSE= RMSE, alpha=alpha)
+                                                            RMSE= RMSE, alpha=alpha,
+                                                            random=random )
     except:
         raise Exception("No solution")
     diagnostics['steps'] = steps
