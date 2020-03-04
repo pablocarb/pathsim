@@ -121,7 +121,7 @@ def modelTemplate(promoter, decay=False):
 
           // Compartment initializations:
           Cell = 1;
-//          Growth = 1;
+//          Growth = 1;pathSim.PlotResponse()
 
           // Variable initializations:
 //          Induction_Shalve = 1e-1;
@@ -147,16 +147,17 @@ def modelTemplate(promoter, decay=False):
     return antinom
         
         
-def pathway(promoters):         
+def pathway(promoters, decay=True):         
     antinom = modelHeader()
-    antinom += modelTemplate(1, True)  
+    if decay:
+        antinom += modelTemplate(1, decay)  
     antinom += modelTemplate(1)
     antinom += modelTemplate(None)    
     antinom += "model *Big_Model()"+"\n"
     for i in np.arange(len(promoters)):
         p = promoters[i]
         if p is not None:
-            if i == 0:
+            if i == 0 and decay:
                 antinom += "\t"+"m%d: Prom_Upstream_Model();" % (i+1,)
             else:        
                 antinom += "\t"+"m%d: Prom_Model();" % (i+1,)
@@ -214,7 +215,7 @@ def ranges():
     """ Define global ranges for random parameters """
     param = {
         'Catalysis': {
-                'Km': [1e-2, 1e-4], # Center=1 mM  #[1e2, 1e3],
+                'Km': [1e-4, 1e-2], # Center=1 mM  #[1e2, 1e3],
                 'kcat': [1, 1e3], # Center= 100 s^-1 #1, 1] 
                 },
         'Degradation': {
@@ -564,7 +565,7 @@ def resetPlot():
     
 def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32, 
         show=False, visual=False, save=False,
-        predSample=1000, simSample=100, timespan=3600, random=False):
+        predSample=1000, simSample=100, timespan=3600, random=False, out='.'):
     # Generate a DoE-based library and simulate results
     if show:
         resetPlot()
@@ -572,8 +573,8 @@ def POC(steps=3, nplasmids=2, npromoters=2, variants=1, libsize=32,
                                                           variants, libsize, show=show, 
                                                           timespan=timespan, random=random)
     if visual:
-        createnewCad(M=M,outfile=os.path.join(out,'doedesign.svg'),colvariants=True)
-        makePDF(os.path.join(out,'doedesign.svg'),os.path.join(out,'doedesign.pdf'))
+        createnewCad(M=M,outfile=os.path.join(out,'doedesign1.svg'),colvariants=True)
+        makePDF(os.path.join(out,'doedesign1.svg'),os.path.join(out,'doedesign1.pdf'))
     print('Test')
     # Fit a regression (constrast) model
     res, dd = FitModel(M,results)
